@@ -12,9 +12,14 @@ library(ggpubr)
 
 library(ISLR)
 data("Carseats")
+str(Carseats)
+
+train.idx <- sample(1:nrow(Carseats), as.integer(0.2*nrow(Carseats)))
+train.data <- Carseats[train.idx,]
+test.data <- Carseats[-train.idx,]
 
 #Parameters for prior
-mc.params <- CART.extract.params(Sales~., Carseats)
+mc.params <- CART.extract.params(Sales~., train.data)
 
 #Record tree performance
 criteria.name <- c("l.post", "SSE", "n.leaf")
@@ -23,15 +28,18 @@ criteria.func <- function(tree) {
 }
 
 #Initialize MCMC
-mtree <- CART.create(Carseats, c(0.5, 1.5))
+mtree <- CART.create(train.data, c(0.5, 1.5))
 SSE0 <- CART.get.tree.SSE(mtree)
 print(SSE0)
 print(CART.prob.likelihood.regression(mtree, mc.params))
 
 #MCMC
-max.iter <- 500
+max.iter <- 5000
 criteria.matrix <- `colnames<-`(matrix(0, ncol=length(criteria.name), nrow=max.iter+1), criteria.name)
 criteria.matrix[1,] <- criteria.func(mtree)
+
+optimal.SSE <- criteria.matrix[1,2]
+optimal.model <- mtree
 
 a.count <- 0
 vec.moves <- c("grow", "prune", "change")
@@ -61,6 +69,11 @@ for (iter in 1:max.iter) {
   
   criteria.matrix[iter+1,] <- criteria.func(mtree)
   
+  if (optimal.SSE > criteria.matrix[iter+1,2] || (optimal.SSE == criteria.matrix[iter+1,2] && runif(1) <= 0.5)) {
+    optimal.SSE <- criteria.matrix[iter+1,2]
+    optima.model <- Clone(mtree)
+  }
+  
   if (iter %% 100 == 0) {
     print(paste0('============= #', as.character(iter), '(', format(a.count/iter, digits = 3),')'), quot=F)
     print(CART.prob.likelihood.regression(mtree, mc.params), quot=F)
@@ -74,14 +87,29 @@ ggarrange(ggplot(criteria.df) + geom_line(aes(x=0:max.iter, y=l.post))+xlab('ite
           ggplot(criteria.df) + geom_line(aes(x=0:max.iter, y=n.leaf))+xlab('iter')+theme_classic(),
           ncol = 1)
 
-print(mtree)
+
+greed.tree <- rpart(Sales~., data=train.data, method="anova",
+                    control = rpart.control(maxdepth = max(Get(optima.model$leaves, "level"))))
+greed.pred <- predict(greed.tree, newdata = test.data)
+
+CART.set.predict(optima.model)
+bayes.pred <- CART.get.predict(optima.model, test.data)
+
+print(mean((greed.pred-test.data[,1])**2))
+print(mean((bayes.pred-test.data[,1])**2))
 
 ##################### classification tree #####################
 
 #Data loading
 cancer <- read.csv('./data.csv')
 cancer$diagnosis <- as.factor(cancer$diagnosis)
-train.data <- cancer[,-c(1,33)]
+cancer <- cancer[,-c(1,33)]
+
+str(cancer)
+
+train.idx <- sample(1:nrow(cancer), as.integer(0.2*nrow(cancer)))
+train.data <- cancer[train.idx,]
+test.data <- cancer[-train.idx,]
 
 #Parameters for prior
 mc.params <- CART.extract.params(diagnosis~., train.data, is.categorical = T)
@@ -97,9 +125,12 @@ mtree <- CART.create(train.data, c(0.5, 5))
 print(CART.prob.likelihood.category(mtree, mc.params))
 
 #MCMC
-max.iter <- 500
+max.iter <- 5000
 criteria.matrix <- `colnames<-`(matrix(0, ncol=length(criteria.name), nrow=max.iter+1), criteria.name)
 criteria.matrix[1,] <- criteria.func(mtree)
+
+optimal.miscl <- criteria.matrix[1,2]
+optimal.model <- mtree
 
 a.count <- 0
 vec.moves <- c("grow", "prune", "change")
@@ -129,6 +160,11 @@ for (iter in 1:max.iter) {
   
   criteria.matrix[iter+1,] <- criteria.func(mtree)
   
+  if (optimal.miscl > criteria.matrix[iter+1,2] || (optimal.miscl == criteria.matrix[iter+1,2] && runif(1) <= 0.5)) {
+    optimal.miscl <- criteria.matrix[iter+1,2]
+    optima.model <- Clone(mtree)
+  }
+  
   if (iter %% 100 == 0) {
     print(paste0('============= #', as.character(iter), '(', format(a.count/iter, digits = 3),')'), quot=F)
     print(CART.prob.likelihood.category(mtree, mc.params), quot=F)
@@ -142,51 +178,87 @@ ggarrange(ggplot(criteria.df) + geom_line(aes(x=0:max.iter, y=l.post))+xlab('ite
           ggplot(criteria.df) + geom_line(aes(x=0:max.iter, y=n.leaf))+xlab('iter')+theme_classic(),
           ncol = 1)
 
-print(mtree, "SSE", "obs.mean")
+greed.tree <- rpart(diagnosis~., data=train.data, method="class",
+                    control = rpart.control(maxdepth = max(Get(optima.model$leaves, "level"))))
+greed.pred <- predict(greed.tree, newdata = test.data, type = "class")
 
+CART.set.predict(optima.model)
+bayes.pred <- CART.get.predict(optima.model, test.data)
+
+print(mean(greed.pred==test.data[,1]))
+print(mean(bayes.pred==test.data[,1]))
 
 ##################### MCMC functions #####################
+
+CART.set.predict <- function(tree) {
+  if (is.factor(tree$full.obs[,1])) {
+    pv <- lapply(tree$leaves, function(node) {
+      tb.val <- table(CART.get.obs(node)[,1])
+      node$pred.val <- names(which.max(tb.val))
+    })
+  } else {
+    pv <- lapply(tree$leaves, function(node) {
+      node$pred.val <- mean(CART.get.obs(node)[,1])
+    })
+  }
+}
+
+CART.get.predict <- function(tree, data) {
+  pred.val <- numeric(nrow(data))
+  for (i in 1:nrow(data)) {
+    row <- data[i,]
+    node <- tree
+    while(isNotLeaf(node)) {
+      if (node$split.rule$fun(row)) {
+        node <- node$children[[1]]
+      } else {
+        node <- node$children[[2]]
+      }
+    }
+    pred.val[i] <- node$pred.val
+  }
+  return(pred.val)
+}
 
 CART.check.tree.ok <- function(tree) {
   all(sapply(tree$leaves, function(node) {length(node$obs.idx) > 0}))
 }
 
 CART.get.tree.SSE <- function(tree) {
-  sum(sapply(tree$leaves, function(node) {
-    obs.idx <- node$obs.idx
-    if (any(is.na(obs.idx)) || length(obs.idx) == 0) {
-      return(0)
-    } else {
-      y <- CART.get.obs(node)[,1]
-      return(CART.get.data.SSE(y))
-    }
-  }))
+  sum(sapply(tree$leaves, CART.get.node.SSE))
 }
 
-CART.get.data.SSE <- function(data) {
-  if (length(data) > 1) {
-    return(var(data)*(length(data)-1))
+CART.get.node.SSE <- function(node) {
+  obs.idx <- node$obs.idx
+  if (length(obs.idx) == 0) {
+    return(0)
+  } else {
+    y <- CART.get.obs(node)[,1]
+    if (length(y) > 1) {
+      return(var(y)*(length(y)-1))
+    }
+    return(0)
   }
-  return(0)
 }
 
 CART.get.tree.miscl <- function(tree) {
   n.total <- nrow(tree$full.obs)
   sum(sapply(tree$leaves, function(node) {
-    obs.idx <- node$obs.idx
-    if (any(is.na(obs.idx)) || length(obs.idx) == 0) {
-      return(0)
-    } else {
-      y <- CART.get.obs(node)[,1]
-      return(CART.get.data.miscl(y)*length(obs.idx)/n.total)
-    }
+    CART.get.node.miscl(node)*length(node$obs.idx)/n.total
   }))
 }
 
-CART.get.data.miscl <- function(data) {
-  p <- as.numeric(table(data))
-  p <- p/sum(p)
-  1-max(p)
+CART.get.node.miscl <- function(node) {
+  obs.idx <- node$obs.idx
+  if (length(obs.idx) == 0) {
+    return(0)
+  } else {
+    y <- CART.get.obs(node)[,1]
+    p <- as.numeric(table(y))
+    p <- p/sum(p)
+    return(1-max(p))
+  }
+  
 }
 
 CART.extract.params <- function(formula., data, is.categorical=F) {
@@ -251,7 +323,7 @@ CART.prob.likelihood.regression <- function(tree, params, verb=F) {
       node.obs <- CART.get.obs(node)
       n.i <- nrow(node.obs)
       y.i <- node.obs[,1]
-      s.i <- CART.get.data.SSE(y.i)
+      s.i <- CART.get.node.SSE(node)
       t.i <- (mean(y.i)-c.mu)**2*c.a*n.i/(c.a+n.i)
       return(t.i+s.i)
     }))+c.nu*c.lambda)
@@ -525,7 +597,3 @@ CART.move.change <- function(tree) {
     l.prob.rev=0
   ))
 }
-
-
-
-
