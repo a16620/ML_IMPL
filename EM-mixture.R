@@ -1,3 +1,4 @@
+#Andrieu, C., de Freitas, N., Doucet, A. et al. An Introduction to MCMC for Machine Learning. Machine Learning 50, 5–43 (2003). https://doi.org/10.1023/A:1020281327116
 library(ggplot2)
 library(dplyr)
 
