@@ -418,13 +418,28 @@ CART.select.rule <- function(node) {
         )
       )
     } else {
-      rule.values <- sort(obs[,rule.colname], decreasing = T)[-1] #최대값은 빈 노드를 만들 수 있음.
+      #rule.values <- sort(obs[,rule.colname], decreasing = T)[-1] #최대값은 빈 노드를 만들 수 있음.
+      #len.rule.values <- length(rule.values)
+      #if (len.rule.values <= 1 || rule.values[1] == rule.values[len.rule.values]) {
+      #  col.candidates <- col.candidates[col.candidates != rule.colname]
+      #  next
+      #}
+      #rule.value <- sample(rule.values, 1)
+      
+      rule.values <- sort(obs[,rule.colname])
       len.rule.values <- length(rule.values)
-      if (len.rule.values <= 1 || rule.values[1] == rule.values[len.rule.values]) {
+      
+      if (len.rule.values <= 2 || rule.values[1] == rule.values[len.rule.values]) {
         col.candidates <- col.candidates[col.candidates != rule.colname]
         next
       }
-      rule.value <- sample(rule.values, 1)
+      
+      val.idx <- sample(1:(length(rule.values)-1), 1)
+      val.aux <- runif(1)
+      rule.value <- rule.values[val.idx]+val.aux*(rule.values[val.idx+1]-rule.values[val.idx])
+      if (rule.value == rule.values[val.idx+1]) {
+        rule.value <- (rule.values[val.idx]+rule.values[val.idx+1])/2
+      }
       return(
         list(
           split.col=rule.colname,
