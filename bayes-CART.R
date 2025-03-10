@@ -28,7 +28,7 @@ criteria.func <- function(tree) {
 }
 
 #Initialize MCMC
-mtree <- CART.create(train.data, c(0.5, 0.5))
+mtree <- CART.create(train.data, c(0.95, 0.5))
 SSE0 <- CART.get.tree.SSE(mtree)
 print(SSE0)
 print(CART.prob.likelihood.regression(mtree, mc.params))
@@ -57,8 +57,8 @@ for (iter in 1:max.iter) {
   }
   
   if (is.null(mc.new) || !CART.check.tree.ok(mc.new$tree.new)) {
-    criteria.matrix[iter+1,] <- criteria.matrix[iter,]
     fail.count[mc.move] <- fail.count[mc.move]+1
+    criteria.matrix[iter+1,] <- criteria.matrix[iter,]
     next
   }
   
@@ -414,8 +414,7 @@ CART.select.rule <- function(node) {
       return(
         list(
           split.col=rule.colname,
-          split.value=sort(rule.value),
-          l.prob=CART.prob.select.rule(obs, len.values, T)
+          split.value=sort(rule.value)
         )
       )
     } else {
@@ -429,8 +428,7 @@ CART.select.rule <- function(node) {
       return(
         list(
           split.col=rule.colname,
-          split.value=rule.value,
-          l.prob=CART.prob.select.rule(obs, len.rule.values, F)
+          split.value=rule.value
         )
       )
     }
@@ -443,21 +441,19 @@ CART.update.obs <- function(tree) {
     obs.key <- node$split.rule$fun(CART.get.obs(node))
 
     CART.set.obs(node$children[[1]], node$obs.idx[obs.key])
-    CART.update.rule.lik(node$children[[1]])
     CART.set.obs(node$children[[2]], node$obs.idx[!obs.key])
-    CART.update.rule.lik(node$children[[2]])
   }, traversal="level", filterFun = isNotLeaf)
   return(CART.check.tree.ok(tree))
 }
 
-CART.update.rule.lik <- function(node) {
+CART.get.prob.rule <- function(node) {
   obs <- CART.get.obs(node)
   rule.colname <- node$split.rule$rule.col
   if (is.factor(obs[,rule.colname])) {
     len.rule.values <- length(unique(obs[,rule.colname]))
-    node$split.rule$l.prob <- CART.prob.select.rule(obs, len.rule.values, T)
+    return(CART.prob.select.rule(obs, len.rule.values, T))
   } else {
-    CART.prob.select.rule(obs, nrow(obs)-1, F)
+    return(CART.prob.select.rule(obs, nrow(obs)-1, F))
   }
 }
 
@@ -581,7 +577,7 @@ CART.move.grow <- function(tree) {
   node.prob.rev <- as.probability(1/node.prob)
   return(list(
     tree.new=tree.new,
-    l.prob=log(node.prob[selected.node.idx])+rule$l.prob,
+    l.prob=log(node.prob[selected.node.idx])+CART.get.prob.rule(selected.node),
     l.prob.rev=log(node.prob.rev[selected.node.idx])
   ))
 }
@@ -603,7 +599,7 @@ CART.move.prune <- function(tree) {
   
   if (Prune(selected.node, function(cn) F) != 2)
     print("Warning: Pruned not 2")
-  l.prob.sel.split <- selected.node$split.rule$l.prob
+  l.prob.sel.split <- CART.get.prob.rule(selected.node)
   selected.node$split.rule <- NULL
   
   node.prob.rev <- as.probability(1/node.prob)
