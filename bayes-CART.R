@@ -28,7 +28,7 @@ criteria.func <- function(tree) {
 }
 
 #Initialize MCMC
-mtree <- CART.create(train.data, c(0.95, 0.5))
+mtree <- CART.create(train.data, c(0.5, 2.5))
 SSE0 <- CART.get.tree.SSE(mtree)
 print(SSE0)
 print(CART.prob.likelihood.regression(mtree, mc.params))
