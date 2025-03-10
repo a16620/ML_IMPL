@@ -28,13 +28,13 @@ criteria.func <- function(tree) {
 }
 
 #Initialize MCMC
-mtree <- CART.create(train.data, c(0.5, 1.5))
+mtree <- CART.create(train.data, c(0.95, 0.5))
 SSE0 <- CART.get.tree.SSE(mtree)
 print(SSE0)
 print(CART.prob.likelihood.regression(mtree, mc.params))
 
 #MCMC
-max.iter <- 5000
+max.iter <- 1000
 criteria.matrix <- `colnames<-`(matrix(0, ncol=length(criteria.name), nrow=max.iter+1), criteria.name)
 criteria.matrix[1,] <- criteria.func(mtree)
 
@@ -125,7 +125,7 @@ mtree <- CART.create(train.data, c(0.5, 5))
 print(CART.prob.likelihood.category(mtree, mc.params))
 
 #MCMC
-max.iter <- 5000
+max.iter <- 1000
 criteria.matrix <- `colnames<-`(matrix(0, ncol=length(criteria.name), nrow=max.iter+1), criteria.name)
 criteria.matrix[1,] <- criteria.func(mtree)
 
@@ -264,7 +264,7 @@ CART.get.node.miscl <- function(node) {
 CART.extract.params <- function(formula., data, is.categorical=F) {
   if (is.categorical) {
     Y <- data[, all.vars(formula.)[1]]
-    if (F) {
+    if (T) {
       a <- rep(1, length(levels(Y)))
     } else {
       a <- as.numeric(table(Y))
@@ -319,7 +319,7 @@ CART.prob.likelihood.regression <- function(tree, params, verb=F) {
   c.lambda <- params$lambda
   
   l.prob <- c.c+0.5*c.b*log(c.a)-0.5*sum(sapply(tree$leaves, function(node) log(length(node$obs.idx))))-
-    0.5*c.nu*c.lambda*log(sum(sapply(tree$leaves, function(node) {
+    0.5*(nrow(tree$full.obs)+c.nu)*log(sum(sapply(tree$leaves, function(node) {
       node.obs <- CART.get.obs(node)
       n.i <- nrow(node.obs)
       y.i <- node.obs[,1]
@@ -327,6 +327,31 @@ CART.prob.likelihood.regression <- function(tree, params, verb=F) {
       t.i <- (mean(y.i)-c.mu)**2*c.a*n.i/(c.a+n.i)
       return(t.i+s.i)
     }))+c.nu*c.lambda)
+  return(l.prob)
+}
+
+#V2
+CART.prob.likelihood.regression <- function(tree, params) {
+  c.a <- params$a
+  c.c <- ifelse(is.null(params$c), 0, as.numeric(params$c))
+  c.mu <- params$mu
+  c.nu <- params$nu
+  c.nuMlamb <- params$lambda*c.nu
+  c.aMnu <- 0.5*log(c.a)-lgamma(c.nu/2)
+  
+  l.prob <- c.c+0.5*c.nu*log(c.nuMlamb)+
+    sum(sapply(tree$leaves, function(node) {
+      n.i <- length(node$obs.idx)
+      c.aMnu-0.5*log(n.i+c.a)+lgamma((n.i+c.nu)/2)
+      }))-
+    0.5*sum(sapply(tree$leaves, function(node) {
+      node.obs <- CART.get.obs(node)
+      n.i <- nrow(node.obs)
+      y.i <- node.obs[,1]
+      s.i <- CART.get.node.SSE(node)
+      t.i <- (mean(y.i)-c.mu)**2*c.a*n.i/(c.a+n.i)
+      return((n.i+c.nu)*log(t.i+s.i+c.nuMlamb))
+    }))
   return(l.prob)
 }
 
@@ -597,3 +622,4 @@ CART.move.change <- function(tree) {
     l.prob.rev=0
   ))
 }
+
