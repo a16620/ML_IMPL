@@ -28,7 +28,7 @@ criteria.func <- function(tree) {
 }
 
 #Initialize MCMC
-mtree <- CART.create(train.data, c(0.95, 0.5))
+mtree <- CART.create(train.data, c(0.5, 0.5))
 SSE0 <- CART.get.tree.SSE(mtree)
 print(SSE0)
 print(CART.prob.likelihood.regression(mtree, mc.params))
@@ -42,7 +42,8 @@ optimal.SSE <- criteria.matrix[1,2]
 optimal.model <- mtree
 
 a.count <- 0
-vec.moves <- c("grow", "prune", "change")
+vec.moves <- c("grow", "prune", "change", "swap")
+fail.count <- setNames(rep(0, length(vec.moves)), vec.moves)
 for (iter in 1:max.iter) {
   mc.move <- sample(vec.moves, 1)
   if (mc.move == "grow") {
@@ -52,11 +53,12 @@ for (iter in 1:max.iter) {
   } else if (mc.move == "change") {
     mc.new <- CART.move.change(mtree)
   } else if (mc.move == "swap") {
-    #Not implemented
+    mc.new <- CART.move.swap(mtree)
   }
   
   if (is.null(mc.new) || !CART.check.tree.ok(mc.new$tree.new)) {
     criteria.matrix[iter+1,] <- criteria.matrix[iter,]
+    fail.count[mc.move] <- fail.count[mc.move]+1
     next
   }
   
@@ -77,7 +79,7 @@ for (iter in 1:max.iter) {
   if (iter %% 100 == 0) {
     print(paste0('============= #', as.character(iter), '(', format(a.count/iter, digits = 3),')'), quot=F)
     print(CART.prob.likelihood.regression(mtree, mc.params), quot=F)
-    print(SSE0-CART.get.tree.SSE(mtree), quot=F)
+    print(SSE0-mean(criteria.matrix[(iter-99):(iter+1),2]), quot=F)
   }
 }
 
@@ -133,7 +135,8 @@ optimal.miscl <- criteria.matrix[1,2]
 optimal.model <- mtree
 
 a.count <- 0
-vec.moves <- c("grow", "prune", "change")
+vec.moves <- c("grow", "prune", "change", "swap")
+fail.count <- setNames(rep(0, length(vec.moves)), vec.moves)
 for (iter in 1:max.iter) {
   mc.move <- sample(vec.moves, 1)
   if (mc.move == "grow") {
@@ -143,11 +146,12 @@ for (iter in 1:max.iter) {
   } else if (mc.move == "change") {
     mc.new <- CART.move.change(mtree)
   } else if (mc.move == "swap") {
-    
+    mc.new <- CART.move.swap(mtree)
   }
   
   if (is.null(mc.new) || !CART.check.tree.ok(mc.new$tree.new)) {
     criteria.matrix[iter+1,] <- criteria.matrix[iter,]
+    fail.count[mc.move] <- fail.count[mc.move]+1
     next
   }
   
@@ -187,6 +191,88 @@ bayes.pred <- CART.get.predict(optima.model, test.data)
 
 print(mean(greed.pred==test.data[,1]))
 print(mean(bayes.pred==test.data[,1]))
+
+##################### Probability #####################
+
+CART.prob.likelihood.regression <- function(tree, params, verb=F) {
+  c.a <- params$a
+  c.b <- tree$leafCount
+  c.c <- ifelse(is.null(params$c), 0, as.numeric(params$c))
+  c.mu <- params$mu
+  c.nu <- params$nu
+  c.lambda <- params$lambda
+  
+  l.prob <- c.c+0.5*c.b*log(c.a)-0.5*sum(sapply(tree$leaves, function(node) log(length(node$obs.idx))))-
+    0.5*(nrow(tree$full.obs)+c.nu)*log(sum(sapply(tree$leaves, function(node) {
+      node.obs <- CART.get.obs(node)
+      n.i <- nrow(node.obs)
+      y.i <- node.obs[,1]
+      s.i <- CART.get.node.SSE(node)
+      t.i <- (mean(y.i)-c.mu)**2*c.a*n.i/(c.a+n.i)
+      return(t.i+s.i)
+    }))+c.nu*c.lambda)
+  return(l.prob)
+}
+
+#V2
+CART.prob.likelihood.regression <- function(tree, params) {
+  c.a <- params$a
+  c.c <- ifelse(is.null(params$c), 0, as.numeric(params$c))
+  c.mu <- params$mu
+  c.nu <- params$nu
+  c.nuMlamb <- params$lambda*c.nu
+  c.aMnu <- 0.5*log(c.a)-lgamma(c.nu/2)
+  
+  l.prob <- c.c+0.5*c.nu*log(c.nuMlamb)+
+    sum(sapply(tree$leaves, function(node) {
+      n.i <- length(node$obs.idx)
+      c.aMnu-0.5*log(n.i+c.a)+lgamma((n.i+c.nu)/2)
+      }))-
+    0.5*sum(sapply(tree$leaves, function(node) {
+      node.obs <- CART.get.obs(node)
+      n.i <- nrow(node.obs)
+      y.i <- node.obs[,1]
+      s.i <- CART.get.node.SSE(node)
+      t.i <- (mean(y.i)-c.mu)**2*c.a*n.i/(c.a+n.i)
+      return((n.i+c.nu)*log(t.i+s.i+c.nuMlamb))
+    }))
+  return(l.prob)
+}
+
+CART.prob.likelihood.category <- function(tree, params, verb=F) {
+  c.a <- params$a
+  c.as <- params$a.s
+  c.ap <- params$a.p
+  l.prob <- sum(sapply(tree$leaves, function(node) {
+      node.obs <- CART.get.obs(node)
+      n.i <- as.numeric(table(node.obs[,1]))
+      if (verb) {
+        print(n.i)
+      }
+      return(c.ap+sum(lgamma(n.i+c.a))-lgamma(sum(n.i)+c.as))
+    }))
+  return(l.prob)
+}
+
+CART.prob.prior <- function(tree) {
+  split.param <- tree$param.split
+  
+  sum(unlist(tree$Get(function(node) {
+    p <- split.param[1]*node$level**(-split.param[2])
+    log(ifelse(isLeaf(node), 1-p,p))
+  })))
+}
+
+CART.prob.select.rule <- function(obs, len.rule.values, is.categorical) {
+  if (len.rule.values <= 1 || is.na(len.rule.values)) {
+    return(0)
+  }
+  if (is.categorical) {
+    return(-log(2**len.rule.values-2)-log(ncol(obs)-1))
+  } else {
+    return(-log(len.rule.values)-log(ncol(obs)-1))
+  }
+}
 
 ##################### MCMC functions #####################
 
@@ -310,82 +396,6 @@ CART.rule2name <- function(obs, split.col, split.value) {
   }
 }
 
-CART.prob.likelihood.regression <- function(tree, params, verb=F) {
-  c.a <- params$a
-  c.b <- tree$leafCount
-  c.c <- ifelse(is.null(params$c), 0, as.numeric(params$c))
-  c.mu <- params$mu
-  c.nu <- params$nu
-  c.lambda <- params$lambda
-  
-  l.prob <- c.c+0.5*c.b*log(c.a)-0.5*sum(sapply(tree$leaves, function(node) log(length(node$obs.idx))))-
-    0.5*(nrow(tree$full.obs)+c.nu)*log(sum(sapply(tree$leaves, function(node) {
-      node.obs <- CART.get.obs(node)
-      n.i <- nrow(node.obs)
-      y.i <- node.obs[,1]
-      s.i <- CART.get.node.SSE(node)
-      t.i <- (mean(y.i)-c.mu)**2*c.a*n.i/(c.a+n.i)
-      return(t.i+s.i)
-    }))+c.nu*c.lambda)
-  return(l.prob)
-}
-
-#V2
-CART.prob.likelihood.regression <- function(tree, params) {
-  c.a <- params$a
-  c.c <- ifelse(is.null(params$c), 0, as.numeric(params$c))
-  c.mu <- params$mu
-  c.nu <- params$nu
-  c.nuMlamb <- params$lambda*c.nu
-  c.aMnu <- 0.5*log(c.a)-lgamma(c.nu/2)
-  
-  l.prob <- c.c+0.5*c.nu*log(c.nuMlamb)+
-    sum(sapply(tree$leaves, function(node) {
-      n.i <- length(node$obs.idx)
-      c.aMnu-0.5*log(n.i+c.a)+lgamma((n.i+c.nu)/2)
-      }))-
-    0.5*sum(sapply(tree$leaves, function(node) {
-      node.obs <- CART.get.obs(node)
-      n.i <- nrow(node.obs)
-      y.i <- node.obs[,1]
-      s.i <- CART.get.node.SSE(node)
-      t.i <- (mean(y.i)-c.mu)**2*c.a*n.i/(c.a+n.i)
-      return((n.i+c.nu)*log(t.i+s.i+c.nuMlamb))
-    }))
-  return(l.prob)
-}
-
-CART.prob.likelihood.category <- function(tree, params, verb=F) {
-  c.a <- params$a
-  c.as <- params$a.s
-  c.ap <- params$a.p
-  l.prob <- sum(sapply(tree$leaves, function(node) {
-      node.obs <- CART.get.obs(node)
-      n.i <- as.numeric(table(node.obs[,1]))
-      if (verb) {
-        print(n.i)
-      }
-      return(c.ap+sum(lgamma(n.i+c.a))-lgamma(sum(n.i)+c.as))
-    }))
-  return(l.prob)
-}
-
-CART.prob.prior <- function(tree) {
-  split.param <- tree$param.split
-  
-  sum(unlist(tree$Get(function(node) {
-    p <- split.param[1]*node$level**(-split.param[2])
-    log(ifelse(isLeaf(node), 1-p,p))
-  })))
-}
-
-CART.prob.select.rule <- function(obs, rule.values, is.categorical) {
-  if (is.categorical) {
-    return(-log(2**length(rule.values)-2)-log(ncol(obs)-1))
-  } else {
-    return(-log(length(rule.values))-log(ncol(obs)-1))
-  }
-}
 
 CART.select.rule <- function(node) {
   obs <- CART.get.obs(node)
@@ -404,8 +414,8 @@ CART.select.rule <- function(node) {
       return(
         list(
           split.col=rule.colname,
-          split.value=rule.value,
-          l.prob=CART.prob.select.rule(obs, rule.values, T)
+          split.value=sort(rule.value),
+          l.prob=CART.prob.select.rule(obs, len.values, T)
         )
       )
     } else {
@@ -420,7 +430,7 @@ CART.select.rule <- function(node) {
         list(
           split.col=rule.colname,
           split.value=rule.value,
-          l.prob=CART.prob.select.rule(obs, rule.values, F)
+          l.prob=CART.prob.select.rule(obs, len.rule.values, F)
         )
       )
     }
@@ -433,9 +443,31 @@ CART.update.obs <- function(tree) {
     obs.key <- node$split.rule$fun(CART.get.obs(node))
 
     CART.set.obs(node$children[[1]], node$obs.idx[obs.key])
+    CART.update.rule.lik(node$children[[1]])
     CART.set.obs(node$children[[2]], node$obs.idx[!obs.key])
+    CART.update.rule.lik(node$children[[2]])
   }, traversal="level", filterFun = isNotLeaf)
   return(CART.check.tree.ok(tree))
+}
+
+CART.update.rule.lik <- function(node) {
+  obs <- CART.get.obs(node)
+  rule.colname <- node$split.rule$rule.col
+  if (is.factor(obs[,rule.colname])) {
+    len.rule.values <- length(unique(obs[,rule.colname]))
+    node$split.rule$l.prob <- CART.prob.select.rule(obs, len.rule.values, T)
+  } else {
+    CART.prob.select.rule(obs, nrow(obs)-1, F)
+  }
+}
+
+CART.update.rule.swap <- function(node, rule.info) {
+  node$split.rule <- rule.info
+  
+  child.names <- CART.rule2name(CART.get.obs(node), rule.info$split.col, rule.info$split.value)
+  names(node$children) <- child.names
+  node$children[[1]]$name <- child.names[1]
+  node$children[[2]]$name <- child.names[2]
 }
 
 CART.update.rule <- function(node, rule.info) {
@@ -456,12 +488,6 @@ CART.update.rule <- function(node, rule.info) {
   node$split.rule <- rule.info
   
   child.names <- CART.rule2name(obs, rule.info$split.col, rule.info$split.value)
-  if (length(node$children) != length(child.names)) {
-    print(node)
-    print(length(node$children))
-    print(length(child.names))
-    print(child.names)
-  }
   names(node$children) <- child.names
   node$children[[1]]$name <- child.names[1]
   node$children[[2]]$name <- child.names[2]
@@ -511,6 +537,19 @@ CART.create <- function(obs, param.split=c(0.95, 0.5)) {
 as.probability <- function(unp) {
   unp/sum(unp)
 }
+
+CART.compare.rule <- function(rule1, rule2) {
+  if (rule1$split.col != rule2$split.col)
+    return(F)
+  if (length(rule1$split.value) != length(rule2$split.value))
+    return(F)
+  if (any(rule1$split.value != rule1$split.value))
+    return(F)
+  
+  return(T)
+}
+
+##################### MCMC moves #####################
 
 CART.move.grow <- function(tree) {
   tree.new <- Clone(tree)
@@ -590,7 +629,7 @@ CART.move.change <- function(tree) {
     return(NULL)
   ok <- F
   for (max.try in 1:1000) {
-    selected.node.idx <- sample(1:length(node.prob), 1, prob = node.prob)
+    selected.node.idx <- sample(1:length(node.prob), 1)#, prob = node.prob)
     selected.node <- split.node[[selected.node.idx]]
     rule <- CART.select.rule(selected.node)
     if (is.null(rule))
@@ -600,6 +639,63 @@ CART.move.change <- function(tree) {
     subtree$full.obs <- tree.new$full.obs
     
     if (!CART.update.rule(subtree, rule) || !CART.update.obs(subtree)) {
+      next
+    }
+    ok <- T
+    if (isNotRoot(selected.node)) {
+      subtree$full.obs <- NULL
+      parent.of.no <- selected.node$parent
+      parent.of.no$RemoveChild(selected.node$name)
+      parent.of.no$AddChildNode(subtree)
+    } else {
+      tree.new <- subtree
+    }
+    
+    break
+  }
+  if (!ok)
+    return(NULL)
+  return(list(
+    tree.new=tree.new,
+    l.prob=0,
+    l.prob.rev=0
+  ))
+}
+
+CART.move.swap <- function(tree) {
+  if (tree$leafCount < 3) {
+    return(NULL)
+  }
+  tree.new <- Clone(tree)
+  split.node <- Traverse(tree.new, filterFun = function(node) {
+    isNotLeaf(node) && (isNotLeaf(node$children[[1]]) || isNotLeaf(node$children[[2]]))
+  })
+  node.level <- sapply(split.node, function(node) node$level)
+  node.prob <- as.probability(node.level**tree.new$param.split[2])
+  
+  if (length(split.node) == 0)
+    return(NULL)
+  ok <- F
+  for (max.try in 1:1000) {
+    selected.node.idx <- sample(1:length(node.prob), 1)#, prob = node.prob)
+    selected.node <- split.node[[selected.node.idx]]
+    rule.parent <- selected.node$split.rule
+    
+    subtree <- Clone(selected.node)
+    subtree$full.obs <- tree.new$full.obs
+    
+    child.isLeaf <- sapply(subtree$children, isNotLeaf)
+    if (all(child.isLeaf) && CART.compare.rule(subtree$children[[1]]$split.rule, subtree$children[[2]]$split.rule)) {
+      rule.child <- subtree$children[[1]]$split.rule
+      CART.update.rule.swap(subtree$children[[1]], rule.parent)
+      CART.update.rule.swap(subtree$children[[2]], rule.parent)
+    } else {
+      child.node <- subtree$children[[sample(1:2, 1, prob = as.probability(child.isLeaf))]]
+      rule.child <- child.node$split.rule
+      CART.update.rule.swap(child.node, rule.parent)
+    }
+    
+    if (!CART.update.rule(subtree, rule.child) || !CART.update.obs(subtree)) {
       next
     }
     ok <- T
