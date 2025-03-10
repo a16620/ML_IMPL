@@ -1,3 +1,4 @@
+#Chipman, H. A., George, E. I., & McCulloch, R. E. (1998). Bayesian CART Model Search. Journal of the American Statistical Association, 93(443), 935–948. https://doi.org/10.1080/01621459.1998.10473750
 library(data.tree)
 library(rpart)
 library(dplyr)
