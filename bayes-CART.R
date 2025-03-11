@@ -6,8 +6,9 @@ library(ggplot2)
 library(ggpubr)
 
 #순서
-#1.MCMC 동작
-#2.MCMC를 위한 동작 정의 (!!먼저 실행!!)
+#1.MCMC 동작 (!! CART 동작은 주석으로 Probability 섹션부터 정의되어 있음. 거기 먼저 실행해야함 !!)
+#2.MCMC를 위한 동작 정의 (!! 먼저 실행 !!)
+#주의: Probability에 Regression tree용 우도 2가지가 이름이 같음. 두번째에 오는 V2는 Mean-variance shift.
 
 ##################### regression tree #####################
 
