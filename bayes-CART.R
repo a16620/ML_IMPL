@@ -5,6 +5,9 @@ library(dplyr)
 library(ggplot2)
 library(ggpubr)
 
+# 주의: 현재 코드에 여러 버그가 있음. 현재 파일 그대로는 큰 문제 없지만 변형해 다른 데이터에 적용할 경우 문제 발생 가능.
+# 25.03.15에 오른쪽 코드로 업데이트 함. https://github.com/a16620/mcmc-practice/blob/main/BCART-lib.R
+
 #순서
 #1.MCMC 동작 (!! CART 동작은 주석으로 Probability 섹션부터 정의되어 있음. 거기 먼저 실행해야함 !!)
 #2.MCMC를 위한 동작 정의 (!! 먼저 실행 !!)
