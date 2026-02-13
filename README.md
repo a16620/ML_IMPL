@@ -1,5 +1,5 @@
-# mcmc-practice
-R code for implementing MCMC and other simulations.
+# ML_IMPL
+R, python, C code for implementing MCMC and other simulations.
 
 ### How to use
 It is just script, not R package. You can load script by 'source' function.
